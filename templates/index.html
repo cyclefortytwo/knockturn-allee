@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %} Transactions {% endblock %}
+
+{% block content %}
+
+<h1>Merchant {{merchant.id}}</h1>
+<dl class="row">
+  <dt class="col-sm-3">Amount: </dt>
+  <dd class="col-sm-9">{{merchant.balance|grin}} </dd>
+ </dl>
+
+	<p>Recent transactions: </p>
+	<table class="table">
+		<thead>
+			<tr>
+				<th>ID</th>
+				<th>Amount</th>
+				<th>Grins</th>
+				<th>Status</th>
+				<th>Is reported</th>
+				<th>Confirmations</th>
+				<th>Created</th>
+				<th>Updated</th>
+			</tr>
+		</thead>
+		<tbody>
+{% for transaction in transactions %}
+	{% include "_transaction_row.html" %}
+  {% endfor %}
+		</tbody>
+  </table>
+
+
+{% endblock %}

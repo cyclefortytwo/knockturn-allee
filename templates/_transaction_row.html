@@ -1,0 +1,14 @@
+			<tr>
+				<td>{{ transaction.external_id }}</td>
+				<td class="text-nowrap">{{ transaction.amount }}</td>
+				<td class="text-nowrap">{{ transaction.grins() }}</td>
+				<td class="table-{{transaction.color()}}" >{{ transaction.status.to_string() }}</td>
+				<td>{{ transaction.reported }}</td>
+				{% if transaction.current_confirmations(current_height) > transaction.confirmations %}
+				<td>{{transaction.confirmations}}/{{transaction.confirmations}}</td>
+				{% else %}
+				<td>{{transaction.current_confirmations(current_height)}}/{{transaction.confirmations}}</td>
+				{% endif %}
+				<td>{{ transaction.created_at|pretty_date }}</td>
+				<td>{{ transaction.updated_at|pretty_date }}</td>
+			</tr>

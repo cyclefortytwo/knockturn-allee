@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %} Transactions {% endblock %}
+
+{% block content %}
+
+	<p>Transactions: {{transactions.len()}}</p>
+	<table class="table">
+		<thead>
+			<tr>
+				<th>ID</th>
+				<th>Amount</th>
+				<th>Grins</th>
+				<th>Status</th>
+				<th>Confirmations</th>
+				<th>Created</th>
+				<th>Updated</th>
+			</tr>
+		</thead>
+		<tbody>
+{% for transaction in transactions %}
+	{% include "_transaction_row.html" %}
+  {% endfor %}
+		</tbody>
+  </table>
+
+{% endblock %}

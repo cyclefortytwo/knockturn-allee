@@ -1,0 +1,5 @@
+CREATE TABLE rates (
+	id TEXT NOT NULL PRIMARY KEY,
+    rate FLOAT NOT NULL,
+  	updated_at TIMESTAMP NOT NULL
+);

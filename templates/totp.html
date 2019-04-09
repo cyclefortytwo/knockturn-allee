@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %} Set 2FA {% endblock %}
+
+{% block head %}
+  <style>
+  </style>
+{% endblock %}
+
+{% block content %}
+
+	<img src="data:image/png;base64,{{image}}">
+	<br/>
+	token = {{token}}<br/>
+
+	{{msg}}<br/>
+	<form method="POST" >
+		code: <input name="code" type="text">
+		<input type="submit" value="Login">
+	</form>
+
+{% endblock %}

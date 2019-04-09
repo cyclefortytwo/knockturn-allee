@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}2FA{% endblock %}
+
+{% block head %}
+  <style>
+  </style>
+{% endblock %}
+
+{% block content %}
+	<form method="POST" >
+		code: <input name="code" type="text">
+		<input type="submit" value="Login">
+	</form>
+{% endblock %}
