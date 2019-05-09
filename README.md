@@ -1,5 +1,7 @@
 # Knockturn Allee
 
+[![Join the chat at https://gitter.im/cyclefortytwo/knockturn-allee](https://badges.gitter.im/cyclefortytwo/knockturn-allee.svg)](https://gitter.im/cyclefortytwo/knockturn-allee?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 
 ## Install from the sources
 
