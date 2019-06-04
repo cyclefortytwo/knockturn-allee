@@ -12,6 +12,11 @@ use uuid::Uuid;
 
 pub const NEW_PAYMENT_TTL_SECONDS: i64 = 15 * 60; //15 minutes since creation time
 pub const PENDING_PAYMENT_TTL_SECONDS: i64 = 7 * 60; //7  minutes since became pending
+
+pub const NEW_PAYOUT_TTL_SECONDS: i64 = 5 * 60; //5  minutes since creation time
+pub const INITIALIZED_PAYOUT_TTL_SECONDS: i64 = 5 * 60; //5  minutes since creation time
+pub const PENDING_PAYOUT_TTL_SECONDS: i64 = 15 * 60; //15 minutes since became pending
+
 pub const WAIT_PER_CONFIRMATION_SECONDS: i64 = 5 * 60; // How long we wait per confirmation. E.g. if payment requires 5 confirmations we will wail 5 * WAIT_PER_CONFIRMATION_SECONDS
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Insertable, Identifiable, Clone)]
@@ -39,9 +44,15 @@ pub struct Merchant {
  * Confirmed - we got required number of confirmation for this transaction
  * Rejected - transaction spent too much time in New or Pending state
  *
+ * The status of payout changes as follows:
+ * New - payout created in db
+ * Initialized - we created transaction in wallet, created slate and sent it to merchant
+ * Pending - user returned to us slate, we finalized it in wallet and wait for required number of confimations
+ * Confirmed - we got required number of confimations
  */
 
 #[derive(Debug, PartialEq, DbEnum, Serialize, Deserialize, Clone, Copy, EnumString, Display)]
+#[DieselType = "Transaction_status"]
 pub enum TransactionStatus {
     New,
     Pending,
@@ -49,6 +60,14 @@ pub enum TransactionStatus {
     InChain,
     Confirmed,
     Initialized,
+    Refund,
+}
+
+#[derive(Debug, PartialEq, DbEnum, Serialize, Deserialize, Clone, Copy, EnumString, Display)]
+#[DieselType = "Transaction_type"]
+pub enum TransactionType {
+    Payment,
+    Payout,
 }
 
 #[derive(
@@ -82,6 +101,7 @@ pub struct Transaction {
     pub transfer_fee: Option<i64>,
     #[serde(skip_serializing)]
     pub real_transfer_fee: Option<i64>,
+    pub transaction_type: TransactionType,
     #[serde(skip_serializing)]
     pub height: Option<i64>,
     #[serde(skip_serializing)]
@@ -98,18 +118,27 @@ impl Transaction {
     }
 
     pub fn time_until_expired(&self) -> Option<Duration> {
-        let expiration_time = match self.status {
-            TransactionStatus::New => {
+        let expiration_time = match (self.transaction_type, self.status) {
+            (TransactionType::Payment, TransactionStatus::New) => {
                 Some(self.created_at + Duration::seconds(NEW_PAYMENT_TTL_SECONDS))
             }
-            TransactionStatus::Pending => {
+            (TransactionType::Payment, TransactionStatus::Pending) => {
                 Some(self.updated_at + Duration::seconds(PENDING_PAYMENT_TTL_SECONDS))
             }
-            TransactionStatus::InChain => Some(
+            (TransactionType::Payout, TransactionStatus::New) => {
+                Some(self.created_at + Duration::seconds(NEW_PAYOUT_TTL_SECONDS))
+            }
+            (TransactionType::Payout, TransactionStatus::Initialized) => {
+                Some(self.created_at + Duration::seconds(INITIALIZED_PAYOUT_TTL_SECONDS))
+            }
+            (TransactionType::Payout, TransactionStatus::Pending) => {
+                Some(self.updated_at + Duration::seconds(PENDING_PAYOUT_TTL_SECONDS))
+            }
+            (_, TransactionStatus::InChain) => Some(
                 self.updated_at
                     + Duration::seconds(self.confirmations * WAIT_PER_CONFIRMATION_SECONDS),
             ),
-            _ => None,
+            (_, _) => None,
         };
         expiration_time.map(|exp_time| exp_time - Utc::now().naive_utc())
     }
@@ -131,14 +160,14 @@ impl Transaction {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Confirmation {
-    pub id: Uuid,
-    pub token: String,
-    pub external_id: String,
-    pub merchant_id: String,
+#[derive(Debug, Serialize, Clone)]
+pub struct Confirmation<'a> {
+    pub id: &'a Uuid,
+    pub token: &'a str,
+    pub external_id: &'a str,
+    pub merchant_id: &'a str,
     pub grin_amount: i64,
-    pub amount: Money,
+    pub amount: &'a Money,
     pub status: TransactionStatus,
     pub confirmations: i64,
 }
@@ -295,6 +324,7 @@ mod tests {
             knockturn_fee: None,
             transfer_fee: None,
             real_transfer_fee: None,
+            transaction_type: TransactionType::Payment,
             height: None,
             commit: None,
             redirect_url: Some(s!("https://store.cycle42.com")),
@@ -322,6 +352,22 @@ mod tests {
         tx.status = TransactionStatus::Confirmed;
         assert!(tx.time_until_expired() == None);
 
+        tx.transaction_type = TransactionType::Payout;
+        tx.status = TransactionStatus::New;
+        assert!(approximately(
+            tx.time_until_expired().unwrap().num_seconds(),
+            NEW_PAYOUT_TTL_SECONDS
+        ));
+        tx.status = TransactionStatus::Initialized;
+        assert!(approximately(
+            tx.time_until_expired().unwrap().num_seconds(),
+            INITIALIZED_PAYOUT_TTL_SECONDS
+        ));
+        tx.status = TransactionStatus::Pending;
+        assert!(approximately(
+            tx.time_until_expired().unwrap().num_seconds(),
+            PENDING_PAYOUT_TTL_SECONDS
+        ));
         tx.status = TransactionStatus::Confirmed;
         assert!(tx.time_until_expired() == None);
     }

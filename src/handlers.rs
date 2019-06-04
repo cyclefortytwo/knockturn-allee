@@ -2,7 +2,8 @@ use crate::app::AppState;
 use crate::db::{CreateMerchant, GetMerchant};
 use crate::errors::*;
 use crate::extractor::SimpleJson;
-use crate::models::{Transaction, TransactionStatus};
+use crate::models::{Merchant, Transaction, TransactionStatus, TransactionType};
+use crate::totp::Totp;
 use actix_web::{AsyncResponder, FutureResponse, HttpResponse, Path, State};
 use askama::Template;
 use bcrypt;
@@ -48,6 +49,15 @@ pub fn get_merchant(
         .responder()
 }
 
+fn check_2fa_code(merchant: &Merchant, code: &str) -> Result<bool, Error> {
+    let token_2fa = merchant
+        .token_2fa
+        .clone()
+        .ok_or(Error::General(s!("No 2fa token")))?;
+    let totp = Totp::new(merchant.id.clone(), token_2fa);
+    Ok(totp.check(code)?)
+}
+
 pub trait TemplateIntoResponse {
     fn into_response(&self) -> Result<HttpResponse, Error>;
     fn into_future(&self) -> FutureResponse<HttpResponse, Error>;
@@ -69,11 +79,11 @@ pub trait BootstrapColor {
 }
 impl BootstrapColor for Transaction {
     fn color(&self) -> &'static str {
-        match self.status {
-            TransactionStatus::Confirmed => "success",
-            TransactionStatus::Pending => "info",
-            TransactionStatus::Rejected => "secondary",
-            _ => "light",
+        match (self.transaction_type, self.status) {
+            (TransactionType::Payout, TransactionStatus::Confirmed) => "success",
+            (TransactionType::Payout, TransactionStatus::Pending) => "info",
+            (TransactionType::Payment, TransactionStatus::Rejected) => "secondary",
+            (_, _) => "light",
         }
     }
 }

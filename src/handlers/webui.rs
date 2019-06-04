@@ -6,7 +6,7 @@ use crate::extractor::Identity;
 use crate::filters;
 use crate::handlers::BootstrapColor;
 use crate::handlers::TemplateIntoResponse;
-use crate::models::{Merchant, Transaction};
+use crate::models::{Merchant, Transaction, TransactionType};
 use actix_web::middleware::identity::RequestIdentity;
 use actix_web::middleware::session::RequestSession;
 use actix_web::{AsyncResponder, Form, FutureResponse, HttpRequest, HttpResponse};
@@ -43,7 +43,7 @@ pub fn index(
                     .load::<Transaction>(conn)
                     .map_err::<Error, _>(|e| e.into())
             }?;
-            let current_height = {
+                      let current_height = {
                 use crate::schema::current_height::dsl::*;
                 current_height
                     .select(height)
@@ -54,7 +54,7 @@ pub fn index(
         }
     })
     .from_err()
-    .and_then(move |(transactions, current_height)| {
+    .and_then(move |(transactions,  current_height)| {
         let html = IndexTemplate {
             merchant: &merchant,
             transactions: transactions,

@@ -1,7 +1,10 @@
 use crate::blocking;
 use crate::db::{DbExecutor, RejectExpiredPayments};
 use crate::errors::Error;
-use crate::fsm::{Fsm, GetPendingPayments, GetUnreportedPayments, RejectPayment, ReportPayment};
+use crate::fsm::{
+    Fsm, GetPendingPayments, GetUnreportedConfirmedPayments, GetUnreportedRejectedPayments,
+    RejectPayment, ReportPayment,
+};
 use crate::models::{Transaction, TransactionStatus};
 use crate::node::Node;
 use crate::rates::RatesFetcher;
@@ -36,7 +39,14 @@ impl Actor for Cron {
         );
         ctx.run_interval(std::time::Duration::new(5, 0), reject_expired_payments);
         ctx.run_interval(std::time::Duration::new(5, 0), process_pending_payments);
-        ctx.run_interval(std::time::Duration::new(5, 0), process_unreported_payments);
+        ctx.run_interval(
+            std::time::Duration::new(5, 0),
+            process_unreported_confirmed_payments,
+        );
+        ctx.run_interval(
+            std::time::Duration::new(5, 0),
+            process_unreported_rejected_payments,
+        );
         ctx.run_interval(std::time::Duration::new(5, 0), sync_with_node);
         ctx.run_interval(std::time::Duration::new(5, 0), autoconfirmation);
     }
@@ -112,10 +122,10 @@ fn process_pending_payments(cron: &mut Cron, _: &mut Context<Cron>) {
     actix::spawn(res.map_err(|e| error!("Got an error in processing penging payments {}", e)));
 }
 
-fn process_unreported_payments(cron: &mut Cron, _: &mut Context<Cron>) {
+fn process_unreported_confirmed_payments(cron: &mut Cron, _: &mut Context<Cron>) {
     let res = cron
         .fsm
-        .send(GetUnreportedPayments)
+        .send(GetUnreportedConfirmedPayments)
         .map_err(|e| Error::General(s!(e)))
         .and_then(move |db_response| {
             let payments = db_response?;
@@ -156,6 +166,49 @@ fn process_unreported_payments(cron: &mut Cron, _: &mut Context<Cron>) {
     }));
 }
 
+fn process_unreported_rejected_payments(cron: &mut Cron, _: &mut Context<Cron>) {
+    let res = cron
+        .fsm
+        .send(GetUnreportedRejectedPayments)
+        .map_err(|e| Error::General(s!(e)))
+        .and_then(move |db_response| {
+            let payments = db_response?;
+            Ok(payments)
+        })
+        .and_then({
+            let fsm = cron.fsm.clone();
+            move |payments| {
+                let mut futures = vec![];
+                debug!("Found {} unreported payments", payments.len());
+                for payment in payments {
+                    let payment_id = payment.id.clone();
+                    futures.push(
+                        fsm.send(ReportPayment { payment })
+                            .map_err(|e| Error::General(s!(e)))
+                            .and_then(|db_response| {
+                                db_response?;
+                                Ok(())
+                            })
+                            .or_else({
+                                move |e| {
+                                    warn!("Couldn't report payment {}: {}", payment_id, e);
+                                    Ok(())
+                                }
+                            }),
+                    );
+                }
+                join_all(futures).map(|_| ()).map_err(|e| {
+                    error!("got an error {}", e);
+                    e
+                })
+            }
+        });
+
+    actix::spawn(res.map_err(|e| {
+        error!("got an error {}", e);
+        ()
+    }));
+}
 fn sync_with_node(cron: &mut Cron, _: &mut Context<Cron>) {
     debug!("run sync_with_node");
     let pool = cron.pool.clone();
@@ -171,7 +224,7 @@ fn sync_with_node(cron: &mut Cron, _: &mut Context<Cron>) {
     })
     .map_err(|e| e.into())
     .and_then(move |last_height| {
-        node.blocks(last_height, last_height + REQUST_BLOCKS_FROM_NODE)
+        node.blocks(last_height + 1, last_height + 1 + REQUST_BLOCKS_FROM_NODE)
             .and_then(move |blocks| {
                 let new_height = blocks
                     .iter()
@@ -204,14 +257,29 @@ fn sync_with_node(cron: &mut Cron, _: &mut Context<Cron>) {
                                 debug!("Found {} transactions which got into chain", txs.len());
                             }
                             for tx in txs {
-                                diesel::update(transactions.filter(id.eq(tx.id.clone())))
-                                    .set((
-                                        height.eq(commits.get(&tx.commit.unwrap()).unwrap()),
+                                let query =
+                                    diesel::update(transactions.filter(id.eq(tx.id.clone())));
+
+                                match tx.status {
+                                    TransactionStatus::Pending => query.set((
                                         status.eq(TransactionStatus::InChain),
-                                    ))
-                                    .get_result(conn)
-                                    .map(|_: Transaction| ())
-                                    .map_err::<Error, _>(|e| e.into())?;
+                                        height.eq(commits.get(&tx.commit.unwrap()).unwrap()),
+                                    )),
+                                    TransactionStatus::Rejected => query.set((
+                                        status.eq(TransactionStatus::Refund),
+                                        height.eq(commits.get(&tx.commit.unwrap()).unwrap()),
+                                    )),
+                                    _ => {
+                                        return Err(Error::General(format!(
+                                            "Transaction {} in chain although it has status {}",
+                                            tx.id.clone(),
+                                            tx.status
+                                        )))
+                                    }
+                                }
+                                .get_result(conn)
+                                .map(|_: Transaction| ())
+                                .map_err::<Error, _>(|e| e.into())?;
                             }
                             {
                                 debug!("Set new last_height = {}", new_height);

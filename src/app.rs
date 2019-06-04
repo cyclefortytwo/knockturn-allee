@@ -8,6 +8,7 @@ use actix_web::middleware::session::{CookieSessionBackend, SessionStorage};
 use actix_web::{http::Method, middleware, App};
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, Pool};
+use sentry_actix::SentryMiddleware;
 
 pub struct AppState {
     pub db: Addr<DbExecutor>,
@@ -22,6 +23,7 @@ pub fn create_app(
     fsm: Addr<Fsm>,
     pool: Pool<ConnectionManager<PgConnection>>,
     cookie_secret: &[u8],
+    enable_sentry: bool,
 ) -> App<AppState> {
     let state = AppState {
         db,
@@ -29,8 +31,11 @@ pub fn create_app(
         fsm,
         pool,
     };
-    App::with_state(state)
-        .middleware(middleware::Logger::new("\"%r\" %s %b %Dms"))
+    let mut app = App::with_state(state);
+    if enable_sentry {
+        app = app.middleware(SentryMiddleware::new());
+    }
+    app.middleware(middleware::Logger::new("\"%r\" %s %b %Dms"))
         .middleware(IdentityService::new(
             CookieIdentityPolicy::new(cookie_secret)
                 .name("auth-example")
@@ -80,7 +85,7 @@ pub fn create_app(
             r.method(Method::GET).with(mfa::form_2fa);
             r.method(Method::POST).with(mfa::post_2fa);
         })
-        .resource("/transactions", |r| {
+            .resource("/transactions", |r| {
             r.method(Method::GET).with(webui::get_transactions)
         })
 }

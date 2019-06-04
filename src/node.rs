@@ -54,7 +54,6 @@ impl Node {
             })
             .and_then(|resp| {
                 // <- server http response
-                debug!("Response: {:?}", resp);
                 resp.body()
                     .limit(10 * 1024 * 1024)
                     .map_err(|e| Error::NodeAPIError(s!(e)))

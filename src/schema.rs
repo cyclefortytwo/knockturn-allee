@@ -1,10 +1,18 @@
 table! {
+    use diesel::sql_types::*;
+    use crate::models::Transaction_status;
+    use crate::models::Transaction_type;
+
     current_height (height) {
         height -> Int8,
     }
 }
 
 table! {
+    use diesel::sql_types::*;
+    use crate::models::Transaction_status;
+    use crate::models::Transaction_type;
+
     merchants (id) {
         id -> Text,
         email -> Varchar,
@@ -20,6 +28,10 @@ table! {
 }
 
 table! {
+    use diesel::sql_types::*;
+    use crate::models::Transaction_status;
+    use crate::models::Transaction_type;
+
     rates (id) {
         id -> Text,
         rate -> Float8,
@@ -28,13 +40,17 @@ table! {
 }
 
 table! {
+    use diesel::sql_types::*;
+    use crate::models::Transaction_status;
+    use crate::models::Transaction_type;
+
     transactions (id) {
         id -> Uuid,
         external_id -> Text,
         merchant_id -> Text,
         grin_amount -> Int8,
         amount -> Jsonb,
-        status -> crate::models::TransactionStatusMapping,
+        status -> Transaction_status,
         confirmations -> Int8,
         email -> Nullable<Text>,
         created_at -> Timestamp,
@@ -49,6 +65,7 @@ table! {
         knockturn_fee -> Nullable<Int8>,
         transfer_fee -> Nullable<Int8>,
         real_transfer_fee -> Nullable<Int8>,
+        transaction_type -> Transaction_type,
         height -> Nullable<Int8>,
         commit -> Nullable<Text>,
         redirect_url -> Nullable<Text>,
@@ -56,6 +73,10 @@ table! {
 }
 
 table! {
+    use diesel::sql_types::*;
+    use crate::models::Transaction_status;
+    use crate::models::Transaction_type;
+
     txs (slate_id) {
         slate_id -> Text,
         created_at -> Timestamp,
@@ -74,4 +95,10 @@ table! {
 joinable!(transactions -> merchants (merchant_id));
 joinable!(txs -> transactions (order_id));
 
-allow_tables_to_appear_in_same_query!(current_height, merchants, rates, transactions, txs,);
+allow_tables_to_appear_in_same_query!(
+    current_height,
+    merchants,
+    rates,
+    transactions,
+    txs,
+);

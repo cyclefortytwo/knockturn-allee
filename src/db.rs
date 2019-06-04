@@ -1,6 +1,7 @@
 use crate::errors::*;
 use crate::models::{
-    Currency, Merchant, Money, Rate, Transaction, TransactionStatus, NEW_PAYMENT_TTL_SECONDS,
+    Currency, Merchant, Money, Rate, Transaction, TransactionStatus, TransactionType,
+    NEW_PAYMENT_TTL_SECONDS,
 };
 use actix::{Actor, SyncContext};
 use actix::{Handler, Message};
@@ -59,6 +60,7 @@ pub struct CreateTransaction {
     pub confirmations: i64,
     pub email: Option<String>,
     pub message: String,
+    pub transaction_type: TransactionType,
     pub redirect_url: Option<String>,
 }
 
@@ -87,6 +89,9 @@ pub struct GetPayment {
 #[derive(Debug, Deserialize)]
 pub struct GetPaymentsByStatus(pub TransactionStatus);
 
+#[derive(Debug, Deserialize)]
+pub struct GetPayoutsByStatus(pub TransactionStatus);
+
 pub struct ConfirmTransaction {
     pub transaction: Transaction,
     pub confirmed_at: Option<NaiveDateTime>,
@@ -99,12 +104,7 @@ pub struct ReportAttempt {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct MarkAsReported {
-    pub transaction_id: Uuid,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct GetUnreportedTransactions;
+pub struct GetUnreportedPaymentsByStatus(pub TransactionStatus);
 
 #[derive(Debug, Deserialize)]
 pub struct Confirm2FA {
@@ -142,6 +142,10 @@ impl Message for GetPaymentsByStatus {
     type Result = Result<Vec<Transaction>, Error>;
 }
 
+impl Message for GetPayoutsByStatus {
+    type Result = Result<Vec<Transaction>, Error>;
+}
+
 impl Message for GetTransactions {
     type Result = Result<Vec<Transaction>, Error>;
 }
@@ -169,11 +173,7 @@ impl Message for ReportAttempt {
     type Result = Result<(), Error>;
 }
 
-impl Message for MarkAsReported {
-    type Result = Result<(), Error>;
-}
-
-impl Message for GetUnreportedTransactions {
+impl Message for GetUnreportedPaymentsByStatus {
     type Result = Result<Vec<Transaction>, Error>;
 }
 
@@ -262,6 +262,7 @@ impl Handler<GetPayment> for DbExecutor {
         let conn: &PgConnection = &self.0.get().unwrap();
         transactions
             .filter(id.eq(msg.transaction_id))
+            .filter(transaction_type.eq(TransactionType::Payment))
             .get_result(conn)
             .map_err(|e| e.into())
     }
@@ -274,6 +275,21 @@ impl Handler<GetPaymentsByStatus> for DbExecutor {
         use crate::schema::transactions::dsl::*;
         let conn: &PgConnection = &self.0.get().unwrap();
         transactions
+            .filter(transaction_type.eq(TransactionType::Payment))
+            .filter(status.eq(msg.0))
+            .load::<Transaction>(conn)
+            .map_err(|e| e.into())
+    }
+}
+
+impl Handler<GetPayoutsByStatus> for DbExecutor {
+    type Result = Result<Vec<Transaction>, Error>;
+
+    fn handle(&mut self, msg: GetPayoutsByStatus, _: &mut Self::Context) -> Self::Result {
+        use crate::schema::transactions::dsl::*;
+        let conn: &PgConnection = &self.0.get().unwrap();
+        transactions
+            .filter(transaction_type.eq(TransactionType::Payout))
             .filter(status.eq(msg.0))
             .load::<Transaction>(conn)
             .map_err(|e| e.into())
@@ -345,6 +361,7 @@ impl Handler<CreateTransaction> for DbExecutor {
             transfer_fee: None,
             knockturn_fee: None,
             real_transfer_fee: None,
+            transaction_type: msg.transaction_type,
             height: None,
             commit: None,
             redirect_url: msg.redirect_url,
@@ -448,34 +465,20 @@ impl Handler<ReportAttempt> for DbExecutor {
     }
 }
 
-impl Handler<MarkAsReported> for DbExecutor {
-    type Result = Result<(), Error>;
-
-    fn handle(&mut self, msg: MarkAsReported, _: &mut Self::Context) -> Self::Result {
-        info!("Mark transaction {} as reported", msg.transaction_id);
-        use crate::schema::transactions::dsl::*;
-        let conn: &PgConnection = &self.0.get().unwrap();
-        diesel::update(transactions.filter(id.eq(msg.transaction_id)))
-            .set((reported.eq(true),))
-            .get_result(conn)
-            .map_err(|e| e.into())
-            .map(|_: Transaction| ())
-    }
-}
-
-impl Handler<GetUnreportedTransactions> for DbExecutor {
+impl Handler<GetUnreportedPaymentsByStatus> for DbExecutor {
     type Result = Result<Vec<Transaction>, Error>;
 
-    fn handle(&mut self, _: GetUnreportedTransactions, _: &mut Self::Context) -> Self::Result {
+    fn handle(
+        &mut self,
+        msg: GetUnreportedPaymentsByStatus,
+        _: &mut Self::Context,
+    ) -> Self::Result {
         use crate::schema::transactions::dsl::*;
         let conn: &PgConnection = &self.0.get().unwrap();
 
         let query = transactions
             .filter(reported.ne(true))
-            .filter(status.eq_any(vec![
-                TransactionStatus::Confirmed,
-                TransactionStatus::Rejected,
-            ]))
+            .filter(status.eq(msg.0))
             .filter(report_attempts.lt(MAX_REPORT_ATTEMPTS))
             .filter(
                 next_report_attempt
@@ -483,11 +486,11 @@ impl Handler<GetUnreportedTransactions> for DbExecutor {
                     .or(next_report_attempt.is_null()),
             );
 
-        let confirmed_transactions = query
+        let payments = query
             .load::<Transaction>(conn)
             .map_err(|e| Error::Db(s!(e)))?;
 
-        Ok(confirmed_transactions)
+        Ok(payments)
     }
 }
 
@@ -532,6 +535,7 @@ impl Handler<RejectExpiredPayments> for DbExecutor {
         diesel::update(
             transactions
                 .filter(status.eq(TransactionStatus::New))
+                .filter(transaction_type.eq(TransactionType::Payment))
                 .filter(
                     created_at
                         .lt(Utc::now().naive_utc() - Duration::seconds(NEW_PAYMENT_TTL_SECONDS)),

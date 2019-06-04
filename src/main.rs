@@ -1,38 +1,16 @@
-#[macro_use]
-mod macros;
-
-mod app;
-mod blocking;
-mod clients;
-mod cron;
-mod db;
-mod errors;
-mod extractor;
-mod filters;
-mod fsm;
-mod handlers;
-mod models;
-mod node;
-mod qrcode;
-mod rates;
-mod schema;
-mod totp;
-mod wallet;
-
-#[macro_use]
-extern crate diesel;
-
-use crate::db::DbExecutor;
-use crate::fsm::Fsm;
-use crate::node::Node;
-use crate::wallet::Wallet;
 use actix::prelude::*;
 use actix_web::server;
 use diesel::{r2d2::ConnectionManager, PgConnection};
 use dotenv::dotenv;
 use env_logger;
+use knockturn::db::DbExecutor;
+use knockturn::fsm::Fsm;
+use knockturn::node::Node;
+use knockturn::wallet::Wallet;
+use knockturn::{app, cron};
 use log::info;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use sentry;
 use std::env;
 
 fn main() {
@@ -63,7 +41,14 @@ fn main() {
     let node_url = env::var("NODE_URL").expect("NODE_URL must be set");
     let node_user = env::var("NODE_USER").expect("NODE_USER must be set");
     let node_pass = env::var("NODE_PASS").expect("NODE_PASS must be set");
+    let sentry_url = env::var("SENTRY_URL").unwrap_or("".to_owned());
     let node = Node::new(&node_url, &node_user, &node_pass);
+
+    if sentry_url != "" {
+        let _ = sentry::init("https://3a46c4de68e54de9ab7e86e7547a4073@sentry.io/1464519");
+        env::set_var("RUST_BACKTRACE", "1");
+        sentry::integrations::panic::register_panic_handler();
+    }
 
     info!("Starting");
     let cron_db = address.clone();
@@ -74,12 +59,13 @@ fn main() {
         let pool = pool.clone();
         move |_| Fsm { db, wallet, pool }
     });
-    let _cron = Arbiter::start({
+       let _cron = Arbiter::start({
         let fsm = fsm.clone();
         let pool = pool.clone();
+        let cron_db = cron_db.clone();
         move |_| cron::Cron::new(cron_db, fsm, node, pool)
     });
-
+  
     let mut srv = server::new(move || {
         app::create_app(
             address.clone(),
@@ -87,6 +73,7 @@ fn main() {
             fsm.clone(),
             pool.clone(),
             cookie_secret.as_bytes(),
+            sentry_url != "",
         )
     });
 
